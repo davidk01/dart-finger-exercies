@@ -9,14 +9,17 @@ class Watcher {
   ReceivePort receiver;
   Directory directory;
 
-  Watcher(String directory) {
+  Watcher(String dir) {
     this.accumulator = new HashMap();
     this.receiver = new ReceivePort();
-    this.directory = new Directory(directory);
-    this.directory.list().forEach((FileSystemEntity f) {
+    this.directory = new Directory(dir);
+    directory.listSync().forEach((FileSystemEntity f) {
       accumulator[filter(f.path)] = f;
     });
-    this.receiver.listen((dynamic request) {
+    directory.watch().listen((FileSystemEvent ev) {
+      associator(ev);
+    });
+    receiver.listen((dynamic request) {
       SendPort sender = request['sender'];
       sender.send(accumulator);
     });
