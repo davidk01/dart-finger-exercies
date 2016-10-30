@@ -5,21 +5,22 @@ import 'dart:async';
 
 class Watcher {
 
-  HashMap<String, dynamic> accumulator;
-  ReceivePort receiver;
-  Directory directory;
+  final HashMap<String, dynamic> accumulator;
+  final ReceivePort receiver;
+  final Directory directory;
 
-  Watcher(String dir) {
-    this.accumulator = new HashMap();
-    this.receiver = new ReceivePort();
-    this.directory = new Directory(dir);
+  Watcher(final String dir) :
+        receiver = new ReceivePort(),
+        accumulator = new HashMap(),
+        directory = new Directory(dir)
+  {
     directory.listSync().forEach((FileSystemEntity f) {
       accumulator[filter(f.path)] = f;
     });
     directory.watch().listen((FileSystemEvent ev) {
       associator(ev);
     });
-    receiver.listen((dynamic request) {
+    receiver.listen((var request) {
       SendPort sender = request['sender'];
       sender.send(accumulator);
     });
@@ -27,7 +28,7 @@ class Watcher {
 
   SendPort get sendPort => receiver.sendPort;
 
-  String filter(String path) => path.substring(2);
+  String filter(final String path) => path.substring(2);
 
   Stream<FileSystemEvent> saneEvents() async* {
     await for (final ev in directory.watch()) {
@@ -45,7 +46,7 @@ class Watcher {
     }
   }
   
-  void associator(FileSystemEvent ev) {
+  void associator(final FileSystemEvent ev) {
     final String path = ev.path;
     switch (ev.type) {
       case FileSystemEvent.CREATE:
@@ -66,19 +67,19 @@ class Watcher {
   
 }
 
-Future startServer(SendPort watcher) async {
+Future startServer(final SendPort watcher) async {
   final server =
       await HttpServer.bind(InternetAddress.ANY_IP_V4, 8080, shared: true);
   server.autoCompress = true;
   await for (final request in server) {
     final response = request.response;
     try {
-      final pathSegments = request.uri.pathSegments;
+      final List<String> pathSegments = request.uri.pathSegments;
       if (pathSegments.length == 0) {
         final ReceivePort receiver = new ReceivePort();
         watcher.send({'sender': receiver.sendPort});
         final HashMap<String, dynamic> accumulator = await receiver.first;
-        response.add(accumulator.keys.toString().codeUnits);
+        response.add(accumulator.keys.join("\n").codeUnits);
       } else {
         final fileName = request.uri.pathSegments.first;
         final file = new File(fileName);
