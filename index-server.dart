@@ -97,10 +97,15 @@ Future startServer(final SendPort watcher) async {
 }
 
 Future main() async {
+  var errorCounter = 0;
   final errorPort = new ReceivePort();
   final watcher = new Watcher('./');
   await Isolate.spawn(startServer, watcher.sendPort, onError: errorPort.sendPort);
   await for (final m in errorPort) {
+    errorCounter += 1;
+    if (errorCounter > 10) {
+      exit(1);
+    }
     print('error with worker. restarting');
     print(m);
     await Isolate.spawn(startServer, watcher.sendPort, onError: errorPort.sendPort);
