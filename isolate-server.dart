@@ -1,7 +1,8 @@
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:async';
 
-void startServer(dynamic m) async {
+Future startServer(dynamic m) async {
   final server =
       await HttpServer.bind(InternetAddress.ANY_IP_V4, 8080, shared: true);
   server.autoCompress = true;
@@ -22,7 +23,7 @@ void startServer(dynamic m) async {
   }
 }
 
-void main() async {
+Future main() async {
   final errorPort = new ReceivePort();
   await Isolate.spawn(startServer, null, onError: errorPort.sendPort);
   await for (final m in errorPort) {

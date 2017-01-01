@@ -29,14 +29,20 @@ class SHA256 {
   ];
 
   // helpers as defined in the spec
+  // (sh)ift (r)ight
   static int shr(int f, int n) => f >> n;
+  // (rot)ate (r)ight
   static int rotr(int f, int n) => (f >> n) | (f << (BITS_PER_WORD - n));
   static int parity(int x, int y, int z) => x ^ y ^ z;
   static int ch(x, y, z) => (x & y) ^ (~x & z);
   static int maj(x, y, z) => (x & y) ^ (x & z) ^ (y & z);
+  // (b)ig (sig)ma 0
   static int bsig0(int x) => rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22);
+  // (b)ig (sig)ma 1
   static int bsig1(int x) => rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25);
+  // (s)mall (sig)ma 0
   static int ssig0(int x) => rotr(x, 7) ^ rotr(x, 18) ^ shr(x, 3);
+  // (s)mall (sig)ma 1
   static int ssig1(int x) => rotr(x, 17) ^ rotr(x, 19) ^ shr(x, 10);
   static int add(int x, int y) => (x + y) & WORD_MASK;
 

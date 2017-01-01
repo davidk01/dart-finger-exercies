@@ -1,8 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:collection';
 import 'dart:isolate';
 
-saneEvents(String directory) async* {
+Stream<FileSystemEvent> saneEvents(String directory) async* {
   final dir = new Directory(directory);
   await for (final ev in dir.watch()) {
     switch (ev.type) {
@@ -19,7 +20,7 @@ saneEvents(String directory) async* {
   }
 }
 
-associator(FileSystemEvent ev, HashMap accumulator) {
+void associator(FileSystemEvent ev, HashMap accumulator) {
   var filter = (String path) => path.substring(2);
   final String path = ev.path;
   switch (ev.type) {
@@ -47,8 +48,8 @@ associator(FileSystemEvent ev, HashMap accumulator) {
 initialize(String directory, HashMap accumulator) async {
   accumulator.clear();
   var dir = new Directory(directory);
-  var entries = dir.list();
-  await for (var entry in entries) {
+  Stream<FileSystemEntity> entries = dir.list();
+  await for (final FileSystemEntity entry in entries) {
     accumulator[entry.path] = entry;
     print(entry);
   }
