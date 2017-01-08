@@ -41,13 +41,38 @@ class Context {
 
   Future<List<int>> read(int size) => opened.read(size);
 
-  get positionMismatch => recentPosition != opened.lengthSync();
-
-  updateRecentPosition() { recentPosition = opened.positionSync(); }
+  get positionTooFar => position > opened.lengthSync();
 
   get position => opened.positionSync();
 
   set position(int position) { opened.setPositionSync(position); }
+
+  resetPosition() { position = 0; }
+
+}
+
+// tails the file by polling
+class PollingTailer {
+
+    final Context context;
+
+    PollingTailer(final this.context);
+
+    modificationAction(Timer timer) async {
+      List<int> read = await context.read(200);
+      while (read.length != 0) {
+        print('Polling read: ${read}');
+        read = await context.read(200);
+        // TODO: Buffer the results and continue to read
+      }
+      // this probably means the file was re-opened
+      if (context.positionTooFar) {
+        context.resetPosition();
+      }
+    }
+
+    start() => new Timer.periodic(
+        new Duration(seconds: 1), modificationAction);
 
 }
 
@@ -70,21 +95,20 @@ class EventedTailer {
         // and position will match but we won't know that we need
         // to reset the position. i'm going to assume this is very unlikely
         // because i don't know how to avoid it.
-        if (context.positionMismatch) {
+        if (context.positionTooFar) {
           // reset to 0 and retry
-          context.position = 0;
+          context.resetPosition();
           read = await context.read(200);
         }
         // Note: the above logic can fail in an interesting way.
         // write some bytes, write those bytes again
       }
-      print('Read: ${read}');
+      print('Evented read: ${read}');
       // continue accumulating into the buffer while possible
       while (read.length > 0) {
         read = await context.read(200);
-        print('Read: ${read}');
+        print('Evented read: ${read}');
       }
-      context.updateRecentPosition();
       // TODO: transform read buffer
     }
     else { // TODO: content was not modified so what should we do?
@@ -106,7 +130,7 @@ class EventedTailer {
           return 0;
       // go to beginning
         case FileSystemEvent.CREATE:
-          context.position = 0;
+          context.resetPosition();
           break;
       // file was modified so we should try to read
         case FileSystemEvent.MODIFY:
@@ -131,5 +155,9 @@ Future main() async {
   // the file we are interested in watching
   final Context context = new Context(f);
   final EventedTailer eventedTailer = new EventedTailer(context);
+  final PollingTailer pollingTailer = new PollingTailer(context);
+  print('Starting evented tailer');
   eventedTailer.start();
+  print('Starting polling tailer');
+  pollingTailer.start();
 }
