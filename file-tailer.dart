@@ -41,13 +41,17 @@ class Context {
 
   Future<List<int>> read(int size) => opened.read(size);
 
-  get positionTooFar => position > opened.lengthSync();
+  Future<List<int>> get readTillEnd => opened.read(positionDelta);
 
-  get position => opened.positionSync();
+  bool get positionTooFar => positionDelta < 0;
 
-  set position(int position) { opened.setPositionSync(position); }
+  int get positionDelta => opened.lengthSync() - position;
 
-  resetPosition() { position = 0; }
+  int get position => opened.positionSync();
+
+  void set position(int position) { opened.setPositionSync(position); }
+
+  void resetPosition() { position = 0; }
 
 }
 
@@ -59,10 +63,10 @@ class PollingTailer {
     PollingTailer(final this.context);
 
     modificationAction(Timer timer) async {
-      List<int> read = await context.read(200);
+      List<int> read = await context.readTillEnd;
       while (read.length != 0) {
         print('Polling read: ${read}');
-        read = await context.read(200);
+        read = await context.readTillEnd;
         // TODO: Buffer the results and continue to read
       }
       // this probably means the file was re-opened
@@ -71,12 +75,12 @@ class PollingTailer {
       }
     }
 
-    start() => new Timer.periodic(
-        new Duration(seconds: 1), modificationAction);
+    // start the polling timer
+    start() => new Timer.periodic(new Duration(seconds: 1), modificationAction);
 
 }
 
-// watches the events on the file and performs contextual operations
+// watches the events on the file and tries to read based on event information
 class EventedTailer {
 
   final Context context;
@@ -85,7 +89,7 @@ class EventedTailer {
 
   modificationAction(final FileSystemEvent ev) async {
     if ((ev as FileSystemModifyEvent).contentChanged) {
-      List<int> read = await context.read(200);
+      List<int> read = await context.readTillEnd;
       // we tried to read but got nothing so maybe truncated
       if (read.length == 0) {
         // if there is a position mismatch then reset position to 0.
@@ -98,7 +102,7 @@ class EventedTailer {
         if (context.positionTooFar) {
           // reset to 0 and retry
           context.resetPosition();
-          read = await context.read(200);
+          read = await context.readTillEnd;
         }
         // Note: the above logic can fail in an interesting way.
         // write some bytes, write those bytes again
@@ -106,7 +110,7 @@ class EventedTailer {
       print('Evented read: ${read}');
       // continue accumulating into the buffer while possible
       while (read.length > 0) {
-        read = await context.read(200);
+        read = await context.readTillEnd;
         print('Evented read: ${read}');
       }
       // TODO: transform read buffer
