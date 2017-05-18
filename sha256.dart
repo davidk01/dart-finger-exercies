@@ -4,14 +4,14 @@ class SHA256 {
 
   // constants
   static const int BITS_PER_BYTE = 8; // no surprises here
-  static const int WORD_SIZE = 4; // 4 bytes in a word
-  static const int BITS_PER_WORD = WORD_SIZE * BITS_PER_BYTE;
+  static const int BYTES_PER_WORD = 4; // 4 bytes in a word
+  static const int BITS_PER_WORD = BYTES_PER_WORD * BITS_PER_BYTE;
   static const int WORDS_PER_BLOCK = 16; // for sha-256 a block is 512 bits
-  static const int BYTES_PER_BLOCK = WORD_SIZE * WORDS_PER_BLOCK;
+  static const int BYTES_PER_BLOCK = BYTES_PER_WORD * WORDS_PER_BLOCK;
   static const int WORDS_PER_SCHEDULE = 64; // as defined in the spec
   static const int MIXING_STEPS = 64; // as defined in the spec
   static const int BYTE_MASK = 0xff; // byte mask
-  static const int WORD_MASK = 0xffffffff; // used for addition mod 2^32
+  static const int WORD_MASK = 0xffffffff; // used for 32-bit addition with overflow
   static const List<int> K = const [ // comes from the spec
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b,
     0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01,
@@ -32,9 +32,8 @@ class SHA256 {
   // (sh)ift (r)ight
   static int shr(int f, int n) => f >> n;
   // (rot)ate (r)ight
-  static int rotr(int f, int n) => (f >> n) | (f << (BITS_PER_WORD - n));
-  static int parity(int x, int y, int z) => x ^ y ^ z;
-  static int ch(x, y, z) => (x & y) ^ (~x & z);
+  static int rotr(int f, int n) => (f >> n) | ((f << (BITS_PER_WORD - n)) & WORD_MASK);
+  static int ch(x, y, z) => (x & y) ^ ((~x & WORD_MASK) & z);
   static int maj(x, y, z) => (x & y) ^ (x & z) ^ (y & z);
   // (b)ig (sig)ma 0
   static int bsig0(int x) => rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22);
@@ -47,6 +46,7 @@ class SHA256 {
   static int add(int x, int y) => (x + y) & WORD_MASK;
 
   // generates hex digest given the output from the final round
+  // which is just a Uint32List
   static String hexify(Uint32List l) {
     final StringBuffer hexString = new StringBuffer();
     for (final int uint in l) {
@@ -62,40 +62,68 @@ class SHA256 {
     return hexString.toString();
   }
 
-  // we work with words (32 bits) so gotta convert bytes (8 bits) to words
-  // and pad the result with what is defined in the spec
+  // we work with 32-bit words so we have to convert bytes (8-bits) to 32-bit words
+  // and pad the result with what is defined in the spec. we assume the input is a Uint8List
   static Iterable<int> words(Uint8List bytes) sync* {
+    // according to the spec
+    //
+    // Suppose that the length of the message, M, is l bits. Append the bit “1” to the end of the
+    // message, followed by k zero bits, where k is the smallest, non-negative solution to the equation
+    // l + 1 + k = 448 mod 512. Then append the 64-bit block that is equal to the number l expressed
+    // using a binary representation. For example, the (8-bit ASCII) message “a{63}” has length
+    // 8 * 63 = 504, so the message is padded with a one bit, then 448 - (504 + 1) = -57 = 455 zero bits,
+    // and then the message length ((455 + 1) + 8 = 456 + 8), to become the 512-bit padded message.
+    //
+    // there is an equivalent way to express this in terms of bytes because we want our message
+    // to always be a multiple of 64 bytes whenever it is not we need to figure out the proper
+    // padding to make it a multiple of 64 bytes. which means we only care what happens when
+    // our message spills over or is exactly a multiple of 64 bytes giving us the range of
+    // 0..63 bytes we have to worry about when padding.
+    final messageLength = bytes.lengthInBytes;
     final int zeroPadding =
-        (BYTES_PER_BLOCK - (bytes.lengthInBytes % BYTES_PER_BLOCK)) - 9;
-    final int lengthInBits = bytes.lengthInBytes * BITS_PER_BYTE;
+        (((BYTES_PER_BLOCK - (messageLength % BYTES_PER_BLOCK)) - 9) +
+            BYTES_PER_BLOCK) % BYTES_PER_BLOCK;
+    final int lengthInBits = messageLength * BITS_PER_BYTE;
     // first we grab everything we know we can safely grab
-    final int safeStrides = (bytes.lengthInBytes / WORD_SIZE).floor();
-    final ByteData accumulator = new ByteData.view(new Uint8List(WORD_SIZE).buffer);
+    // the number of words (32-bit) we can grab before we need to worry about
+    // padding
+    final int safeStrides = (messageLength / BYTES_PER_WORD).floor();
+    // so now we create an 8-bit list with 4 elements and for however many safe
+    // strides we have we go through the original list and populate the word
+    // accumulator and yield it. notice we are mutating it in place and yielding
+    // the mutated buffer
+    final ByteData accumulator = new ByteData.view(new Uint8List(BYTES_PER_WORD).buffer);
     int stride = 0;
     for (; stride < safeStrides; stride++) {
-      for (int j = 0; j < WORD_SIZE; j++) {
-        accumulator.setUint8(j, bytes[stride * WORD_SIZE + j]);
+      for (int j = 0; j < BYTES_PER_WORD; j++) {
+        accumulator.setUint8(j, bytes[stride * BYTES_PER_WORD + j]);
       }
-      yield accumulator.getUint32(0);
+      final toYield = accumulator.getUint32(0);
+      yield toYield;
     }
-    // next we grab everything that is left over + 1 + zero padding
-    final Iterable<int> leftOvers = bytes.getRange(stride * WORD_SIZE, bytes.lengthInBytes);
+    // after the safe number of strides we are going to have some number of bytes left over.
+    // so now we need to add the cap ('10000000'), followed by the required number of 0 bytes
+    // followed by the encoded length
+    final Iterable<int> leftOvers = bytes.getRange(stride * BYTES_PER_WORD, messageLength);
+    final leftOverLength = leftOvers.length;
+    final accumulatorLength = leftOverLength + 1 + zeroPadding;
     final ByteData leftOverAccumulator = new ByteData.view(
-        new Uint8List(leftOvers.length + 1 + zeroPadding).buffer);
+        new Uint8List(accumulatorLength).buffer);
     int i = 0;
-    for (; i < leftOvers.length; i++) {
+    for (; i < leftOverLength; i++) {
       leftOverAccumulator.setUint8(i, leftOvers.elementAt(i));
     }
-    leftOverAccumulator.setUint8(i, 1 << (BITS_PER_BYTE - 1));
-    final int leftOverLimit = (leftOverAccumulator.lengthInBytes / WORD_SIZE).floor();
-    for (stride = 0; stride < leftOverLimit; stride++) {
-      yield leftOverAccumulator.getUint32(stride * WORD_SIZE);
+    leftOverAccumulator.setUint8(i, 128);
+    final int leftOverStrides = (leftOverAccumulator.lengthInBytes / BYTES_PER_WORD).floor();
+    for (stride = 0; stride < leftOverStrides; stride++) {
+      final toYield = leftOverAccumulator.getUint32(stride * BYTES_PER_WORD);
+      yield toYield;
     }
     // finally the length
-    final ByteData tail = new ByteData.view(new Uint8List(WORD_SIZE * 2).buffer);
+    final ByteData tail = new ByteData.view(new Uint8List(BYTES_PER_WORD * 2).buffer);
     tail.setUint64(0, lengthInBits);
     yield tail.getUint32(0);
-    yield tail.getUint32(WORD_SIZE);
+    yield tail.getUint32(BYTES_PER_WORD);
   }
 
   // after we group bytes into words we have to group further
@@ -116,7 +144,6 @@ class SHA256 {
   static Iterable<Uint32List> messageSchedule(Iterable<Uint32List> blocks) sync* {
     final Uint32List w = new Uint32List(WORDS_PER_SCHEDULE);
     for (final Uint32List block in blocks) {
-      assert(block.length == WORDS_PER_BLOCK);
       int i = 0;
       for (final int word in block) {
         w[i++] = word;
@@ -138,14 +165,14 @@ class SHA256 {
       0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f,
       0x9b05688c, 0x1f83d9ab, 0x5be0cd19
     ]);
-    int a = H[0]; int b = H[1];
-    int c = H[2]; int d = H[3];
-    int e = H[4]; int f = H[5];
-    int g = H[6]; int h = H[7];
     for (final Uint32List schedule in messageSchedule(messageBlocks)) {
-      int t = 0;
-      for (; t < MIXING_STEPS; t++) { // mix it up!
-        final int t1 = h + bsig1(e) + ch(e, f, g) + K[t] + schedule[t];
+      int a = H[0]; int b = H[1];
+      int c = H[2]; int d = H[3];
+      int e = H[4]; int f = H[5];
+      int g = H[6]; int h = H[7];
+      for (int t = 0; t < MIXING_STEPS; t++) { // mix it up!
+        final scheduleT = schedule[t];
+        final int t1 = h + bsig1(e) + ch(e, f, g) + K[t] + scheduleT;
         final int t2 = bsig0(a) + maj(a, b, c);
         h = g; g = f; f = e;
         e = add(d, t1);
@@ -163,10 +190,21 @@ class SHA256 {
 }
 
 main() async {
-  final codeUnits = ''.codeUnits;
-  final Uint8List content = new Uint8List.fromList(codeUnits);
-  final Uint32List hash = SHA256.sha256(content);
-  final hexString = SHA256.hexify(hash);
-  print(hexString);
-  assert(hexString == 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+  final List<List<String>> testCases = [
+    ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    '9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318'],
+    ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a'],
+    ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'f506898cc7c2e092f9eb9fadae7ba50383f5b46a2a4fe5597dbb553a78981268']
+  ];
+  for (final testCase in testCases) {
+    final codeUnits = testCase[0].codeUnits;
+    final Uint8List content = new Uint8List.fromList(codeUnits);
+    final Uint32List hash = SHA256.sha256(content);
+    final hexString = SHA256.hexify(hash);
+    print('Computed: ${hexString}. Expected: ${testCase[1]}.');
+    print('');
+    assert(hexString == testCase[1]);
+  }
 }
