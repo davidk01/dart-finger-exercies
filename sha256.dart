@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 class SHA256 {
@@ -33,8 +34,8 @@ class SHA256 {
   static int shr(int f, int n) => f >> n;
   // (rot)ate (r)ight
   static int rotr(int f, int n) => (f >> n) | ((f << (BITS_PER_WORD - n)) & WORD_MASK);
-  static int ch(x, y, z) => (x & y) ^ ((~x & WORD_MASK) & z);
-  static int maj(x, y, z) => (x & y) ^ (x & z) ^ (y & z);
+  static int ch(int x, int y, int z) => (x & y) ^ ((~x & WORD_MASK) & z);
+  static int maj(int x, int y, int z) => (x & y) ^ (x & z) ^ (y & z);
   // (b)ig (sig)ma 0
   static int bsig0(int x) => rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22);
   // (b)ig (sig)ma 1
@@ -189,7 +190,7 @@ class SHA256 {
 
 }
 
-main() async {
+Future main() async {
   final List<List<String>> testCases = [
     ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     '9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318'],
